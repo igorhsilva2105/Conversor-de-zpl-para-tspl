@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Conversor ZPL → TSPL - Impressão Serial</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="bg-slate-50 p-4 md:p-8 font-sans text-slate-800 min-h-screen">
+
+    <div class="max-w-6xl mx-auto space-y-6">
+
+        <!-- Cabeçalho -->
+        <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex items-center justify-between">
+            <div class="flex items-center gap-4">
+                <div class="bg-blue-600 p-3 rounded-xl text-white flex items-center justify-center">
+                    <i data-lucide="file-code-2" class="w-8 h-8"></i>
+                </div>
+                <div>
+                    <h1 class="text-2xl font-bold text-slate-900">Conversor ZPL → TSPL</h1>
+                    <p class="text-slate-500">Converta e imprima via porta serial (Web Serial API)</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alertas -->
+        <div id="error-container" class="hidden bg-red-50 border-l-4 border-red-500 p-4 rounded-r-lg flex items-center gap-3 text-red-700 shadow-sm">
+            <i data-lucide="alert-circle" class="w-5 h-5 flex-shrink-0"></i>
+            <p id="error-text" class="text-sm"></p>
+        </div>
+        <div id="info-container" class="hidden bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r-lg flex items-center gap-3 text-blue-700 shadow-sm">
+            <i data-lucide="info" class="w-5 h-5 flex-shrink-0"></i>
+            <p id="info-text" class="text-sm"></p>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            <!-- Lado Esquerdo: Input ZPL -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[700px]">
+                <div class="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 rounded-t-2xl">
+                    <h2 class="font-semibold text-slate-700 flex items-center gap-2">
+                        <i data-lucide="code-2" class="w-[18px] h-[18px]"></i>
+                        Código Fonte ZPL
+                    </h2>
+                    <button onclick="document.getElementById('file-input').click()" class="flex items-center gap-2 text-sm bg-white border border-slate-200 hover:bg-slate-50 px-3 py-1.5 rounded-lg transition-colors font-medium text-slate-600">
+                        <i data-lucide="upload" class="w-4 h-4"></i>
+                        Carregar .zpl
+                    </button>
+                    <input type="file" id="file-input" accept=".zpl,.txt" class="hidden" onchange="handleFileUpload(event)">
+                </div>
+
+                <div class="flex-1 p-4 flex flex-col">
+                    <textarea id="zpl-input" class="flex-1 w-full p-4 bg-slate-900 text-green-400 font-mono text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" spellcheck="false" placeholder="^XA&#10;^FO50,50^ADN,36,20^FDInsira o ZPL aqui^FS&#10;^XZ">^XA
+^FO50,50^A0N,50,50^FDTeste de Conversao ZPL^FS
+^FO50,150^BY3,2,100^BCN,100,Y,N,N^FD123456789^FS
+^FO50,300^GB700,5,5^FS
+^XZ</textarea>
+
+                    <button onclick="convertToTSPL()" class="mt-4 flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-900 text-white py-3 px-4 rounded-xl font-medium transition-colors cursor-pointer shadow-sm">
+                        <i data-lucide="file-text" class="w-[18px] h-[18px]"></i>
+                        Converter para TSPL
+                    </button>
+                </div>
+            </div>
+
+            <!-- Lado Direito: Resultado TSPL + Serial -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[700px]">
+
+                <div class="p-4 border-b border-slate-100 bg-slate-50/50 rounded-t-2xl">
+                    <h2 class="font-semibold text-slate-700 flex items-center gap-2">
+                        <i data-lucide="file-text" class="w-[18px] h-[18px]"></i>
+                        Resultado TSPL
+                    </h2>
+                </div>
+
+                <div class="flex-1 p-4 flex flex-col">
+                    <!-- Estado Vazio -->
+                    <div id="empty-tspl" class="flex-1 flex flex-col items-center justify-center text-slate-400 gap-3">
+                        <i data-lucide="file-code-2" class="w-12 h-12 opacity-20"></i>
+                        <p>O código TSPL gerado aparecerá aqui.</p>
+                    </div>
+
+                    <!-- Conteúdo TSPL -->
+                    <div id="content-tspl" class="hidden flex-1 flex flex-col h-full">
+                        <div class="bg-blue-50 border border-blue-100 text-blue-800 text-xs p-3 rounded-lg mb-3">
+                            <strong>Nota:</strong> A conversão TSPL é baseada em heurísticas para os comandos mais comuns (texto, código de barras, caixas).
+                        </div>
+                        <textarea id="tspl-output" readonly class="flex-1 w-full p-4 bg-slate-100 text-slate-800 font-mono text-sm rounded-xl focus:outline-none resize-none border border-slate-200"></textarea>
+
+                        <!-- Configurações Serial -->
+                        <div class="mt-4 grid grid-cols-2 gap-3 text-sm">
+                            <div>
+                                <label class="block text-slate-600 font-medium">Baud Rate</label>
+                                <select id="baud-rate" class="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="9600">9600</option>
+                                    <option value="19200">19200</option>
+                                    <option value="38400">38400</option>
+                                    <option value="57600">57600</option>
+                                    <option value="115200" selected>115200</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-slate-600 font-medium">Paridade</label>
+                                <select id="parity" class="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="none">Nenhuma</option>
+                                    <option value="even">Par</option>
+                                    <option value="odd">Ímpar</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-slate-600 font-medium">Data Bits</label>
+                                <select id="data-bits" class="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="7">7</option>
+                                    <option value="8" selected>8</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-slate-600 font-medium">Stop Bits</label>
+                                <select id="stop-bits" class="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="1" selected>1</option>
+                                    <option value="2">2</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="mt-4 flex gap-3">
+                            <button onclick="downloadTSPL()" class="flex-1 flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white py-3 px-4 rounded-xl font-medium transition-colors cursor-pointer">
+                                <i data-lucide="file-down" class="w-[18px] h-[18px]"></i>
+                                Baixar .tspl
+                            </button>
+                            <button id="serial-connect-btn" onclick="toggleSerial()" class="flex-1 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white py-3 px-4 rounded-xl font-medium transition-colors cursor-pointer">
+                                <i data-lucide="usb" class="w-[18px] h-[18px]"></i>
+                                Conectar Serial
+                            </button>
+                        </div>
+                        <div id="serial-status" class="text-xs text-slate-500 text-center mt-2"></div>
+
+                        <!-- Botão de impressão (aparece só quando conectado) -->
+                        <button id="print-btn" onclick="printViaSerial()" class="hidden mt-2 flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-700 text-white py-3 px-4 rounded-xl font-medium transition-colors cursor-pointer w-full">
+                            <i data-lucide="printer" class="w-[18px] h-[18px]"></i>
+                            Imprimir Etiqueta
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        let currentTsplContent = '';
+        let serialPort = null;
+        let reader = null;
+        let writer = null;
+
+        // Elementos DOM
+        const errorContainer = document.getElementById('error-container');
+        const errorText = document.getElementById('error-text');
+        const infoContainer = document.getElementById('info-container');
+        const infoText = document.getElementById('info-text');
+        const statusEl = document.getElementById('serial-status');
+        const connectBtn = document.getElementById('serial-connect-btn');
+        const printBtn = document.getElementById('print-btn');
+
+        function showError(msg) {
+            errorContainer.classList.remove('hidden');
+            errorText.innerText = msg;
+            infoContainer.classList.add('hidden');
+        }
+
+        function hideError() {
+            errorContainer.classList.add('hidden');
+        }
+
+        function showInfo(msg) {
+            infoContainer.classList.remove('hidden');
+            infoText.innerText = msg;
+            hideError();
+        }
+
+        function hideInfo() {
+            infoContainer.classList.add('hidden');
+        }
+
+        function setStatus(msg) {
+            statusEl.innerText = msg;
+        }
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    document.getElementById('zpl-input').value = e.target.result;
+                    currentTsplContent = '';
+                    document.getElementById('empty-tspl').classList.remove('hidden');
+                    document.getElementById('content-tspl').classList.add('hidden');
+                    hideError();
+                    hideInfo();
+                    setStatus('');
+                    printBtn.classList.add('hidden');
+                };
+                reader.readAsText(file);
+            }
+        }
+
+        function convertToTSPL() {
+            const zplInput = document.getElementById('zpl-input').value;
+
+            if (!zplInput.trim()) {
+                showError("O código ZPL não pode estar vazio.");
+                return;
+            }
+
+            hideError();
+            hideInfo();
+            setStatus('');
+            printBtn.classList.add('hidden');
+
+            let tspl = "SIZE 4,6\nGAP 0,0\nDIRECTION 1\nCLS\n";
+            let currentX = 0;
+            let currentY = 0;
+            let currentFontHeight = 30;
+            let elementType = 'TEXT';
+            let barcodeHeight = 50;
+
+            const lines = zplInput.replace(/\n/g, '').split('^');
+
+            try {
+                for (let cmd of lines) {
+                    cmd = cmd.trim();
+                    if (!cmd) continue;
+
+                    if (cmd.startsWith('FO')) {
+                        const parts = cmd.substring(2).split(',');
+                        currentX = parseInt(parts[0] || 0);
+                        currentY = parseInt(parts[1] || 0);
+                    } else if (cmd.startsWith('A0') || cmd.startsWith('A@')) {
+                        const parts = cmd.substring(2).split(',');
+                        currentFontHeight = parseInt(parts[1] || parts[0].replace(/\D/g, '') || 30);
+                        elementType = 'TEXT';
+                    } else if (cmd.startsWith('BC')) {
+                        elementType = 'BARCODE_128';
+                    } else if (cmd.startsWith('B3')) {
+                        elementType = 'BARCODE_39';
+                    } else if (cmd.startsWith('BQ')) {
+                        elementType = 'QRCODE';
+                    } else if (cmd.startsWith('BY')) {
+                        const parts = cmd.substring(2).split(',');
+                        if (parts[2]) barcodeHeight = parseInt(parts[2]);
+                        else if (parts[1]) barcodeHeight = parseInt(parts[1]);
+                    } else if (cmd.startsWith('GB')) {
+                        const parts = cmd.substring(2).split(',');
+                        const w = parseInt(parts[0] || 0);
+                        const h = parseInt(parts[1] || 0);
+                        const t = parseInt(parts[2] || 1);
+                        tspl += `BOX ${currentX},${currentY},${currentX + w},${currentY + h},${t}\n`;
+                    } else if (cmd.startsWith('FD')) {
+                        let data = cmd.substring(2).replace(/FS$/, '').trim();
+
+                        if (elementType === 'TEXT') {
+                            let multiplier = Math.max(1, Math.min(10, Math.floor(currentFontHeight / 20)));
+                            tspl += `TEXT ${currentX},${currentY},"3",0,${multiplier},${multiplier},"${data}"\n`;
+                        } else if (elementType === 'BARCODE_128') {
+                            tspl += `BARCODE ${currentX},${currentY},"128",${barcodeHeight},1,0,2,2,"${data}"\n`;
+                        } else if (elementType === 'BARCODE_39') {
+                            tspl += `BARCODE ${currentX},${currentY},"39",${barcodeHeight},1,0,2,2,"${data}"\n`;
+                        } else if (elementType === 'QRCODE') {
+                            tspl += `QRCODE ${currentX},${currentY},H,4,A,0,"${data}"\n`;
+                        }
+                    }
+                }
+
+                tspl += "PRINT 1,1\n";
+                currentTsplContent = tspl;
+
+                document.getElementById('tspl-output').value = tspl;
+                document.getElementById('empty-tspl').classList.add('hidden');
+                document.getElementById('content-tspl').classList.remove('hidden');
+
+                // Se já estiver conectado, mostra o botão de imprimir
+                if (serialPort) {
+                    printBtn.classList.remove('hidden');
+                }
+
+            } catch (err) {
+                showError("Erro ao converter para TSPL: Verifique a sintaxe do ZPL.");
+            }
+        }
+
+        function downloadTSPL() {
+            if (!currentTsplContent) return;
+            const blob = new Blob([currentTsplContent], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'etiqueta.tspl';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // ===================== Web Serial API =====================
+
+        async function toggleSerial() {
+            if (serialPort) {
+                // Desconectar
+                await closeSerial();
+                return;
+            }
+
+            // Conectar
+            await connectSerial();
+        }
+
+        async function connectSerial() {
+            if (!('serial' in navigator)) {
+                showError("Seu navegador não suporta Web Serial API. Use Chrome/Edge/Chromium.");
+                return;
+            }
+
+            try {
+                // Solicita a porta
+                const port = await navigator.serial.requestPort();
+                if (!port) {
+                    // Usuário cancelou
+                    return;
+                }
+
+                // Configurações
+                const baudRate = parseInt(document.getElementById('baud-rate').value);
+                const parity = document.getElementById('parity').value;
+                const dataBits = parseInt(document.getElementById('data-bits').value);
+                const stopBits = parseInt(document.getElementById('stop-bits').value);
+
+                await port.open({
+                    baudRate,
+                    parity,
+                    dataBits,
+                    stopBits
+                });
+
+                serialPort = port;
+                setStatus(`✅ Conectado a ${port.getInfo().usbProductId || '?'} - ${baudRate} bps`);
+                connectBtn.innerHTML = `<i data-lucide="usb" class="w-[18px] h-[18px]"></i> Desconectar`;
+                connectBtn.className = "flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white py-3 px-4 rounded-xl font-medium transition-colors cursor-pointer";
+                lucide.createIcons();
+
+                // Cria writer e reader
+                const textEncoder = new TextEncoderStream();
+                const writableStreamClosed = textEncoder.readable.pipeTo(port.writable);
+                writer = textEncoder.writable.getWriter();
+
+                // Inicia leitura (opcional para receber feedback)
+                const textDecoder = new TextDecoderStream();
+                const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+                reader = textDecoder.readable.getReader();
+
+                // Mostra botão de impressão se houver conteúdo
+                if (currentTsplContent) {
+                    printBtn.classList.remove('hidden');
+                }
+
+                // Configura listener para quando a porta for fechada (ex: desconexão física)
+                port.addEventListener('disconnect', () => {
+                    if (serialPort === port) {
+                        closeSerial(true);
+                    }
+                });
+
+                showInfo('Porta serial conectada. Pronto para imprimir.');
+
+            } catch (err) {
+                console.error(err);
+                showError('Erro ao conectar: ' + (err.message || err));
+                setStatus('❌ Falha na conexão');
+            }
+        }
+
+        async function closeSerial(disconnected = false) {
+            if (!serialPort) return;
+
+            try {
+                // Libera writer e reader
+                if (writer) {
+                    await writer.close();
+                    writer = null;
+                }
+                if (reader) {
+                    await reader.cancel();
+                    reader = null;
+                }
+                await serialPort.close();
+            } catch (err) {
+                console.warn('Erro ao fechar porta:', err);
+            }
+
+            serialPort = null;
+            setStatus(disconnected ? '❌ Desconectado (dispositivo removido)' : '🔌 Desconectado');
+            connectBtn.innerHTML = `<i data-lucide="usb" class="w-[18px] h-[18px]"></i> Conectar Serial`;
+            connectBtn.className = "flex-1 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white py-3 px-4 rounded-xl font-medium transition-colors cursor-pointer";
+            lucide.createIcons();
+            printBtn.classList.add('hidden');
+            hideInfo();
+        }
+
+        async function printViaSerial() {
+            if (!serialPort) {
+                showError("Conecte-se à porta serial primeiro.");
+                return;
+            }
+
+            if (!currentTsplContent) {
+                showError("Nenhum código TSPL disponível. Converta um ZPL primeiro.");
+                return;
+            }
+
+            hideError();
+            hideInfo();
+
+            try {
+                setStatus('📤 Enviando dados...');
+
+                // Envia o conteúdo TSPL
+                await writer.write(currentTsplContent);
+
+                // Pequena pausa para processamento
+                await new Promise(resolve => setTimeout(resolve, 300));
+
+                setStatus('✅ Dados enviados com sucesso!');
+                showInfo('Comando TSPL enviado para a impressora.');
+
+                // Opcional: ler resposta (se houver)
+                // Nota: muitas impressoras não enviam resposta, então ignoramos.
+
+            } catch (err) {
+                console.error(err);
+                showError('Erro ao imprimir: ' + (err.message || err));
+                setStatus('❌ Falha no envio');
+            }
+        }
+
+        // Limpeza automática ao recarregar a página
+        window.addEventListener('beforeunload', async () => {
+            if (serialPort) {
+                await closeSerial();
+            }
+        });
+    </script>
+</body>
+</html>
