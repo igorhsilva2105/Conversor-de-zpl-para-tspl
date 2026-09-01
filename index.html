@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#2563eb">
-    <title>Conversor ZPL → TSPL - Impressão Serial</title>
+    <title>Conversor ZPL → TSPL - Serial + USB</title>
     <link rel="manifest" href="manifest.json">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -21,7 +20,7 @@
                 </div>
                 <div>
                     <h1 class="text-2xl font-bold text-slate-900">Conversor ZPL → TSPL</h1>
-                    <p class="text-slate-500">Converta e imprima via porta serial (Web Serial API)</p>
+                    <p class="text-slate-500">Converta e imprima via Serial (COM) ou USB direto</p>
                 </div>
             </div>
         </div>
@@ -66,7 +65,7 @@
                 </div>
             </div>
 
-            <!-- Lado Direito: Resultado TSPL + Serial -->
+            <!-- Lado Direito: Resultado TSPL + Conexão -->
             <div class="bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[700px]">
 
                 <div class="p-4 border-b border-slate-100 bg-slate-50/50 rounded-t-2xl">
@@ -90,9 +89,16 @@
                         </div>
                         <textarea id="tspl-output" readonly class="flex-1 w-full p-4 bg-slate-100 text-slate-800 font-mono text-sm rounded-xl focus:outline-none resize-none border border-slate-200"></textarea>
 
-                        <!-- Configurações Serial -->
+                        <!-- Configurações de conexão -->
                         <div class="mt-4 grid grid-cols-2 gap-3 text-sm">
                             <div>
+                                <label class="block text-slate-600 font-medium">Método</label>
+                                <select id="connection-method" class="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="serial">Porta Serial (COM)</option>
+                                    <option value="usb">USB Direto (WebUSB)</option>
+                                </select>
+                            </div>
+                            <div id="serial-settings">
                                 <label class="block text-slate-600 font-medium">Baud Rate</label>
                                 <select id="baud-rate" class="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                                     <option value="9600">9600</option>
@@ -102,28 +108,6 @@
                                     <option value="115200" selected>115200</option>
                                 </select>
                             </div>
-                            <div>
-                                <label class="block text-slate-600 font-medium">Paridade</label>
-                                <select id="parity" class="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                    <option value="none">Nenhuma</option>
-                                    <option value="even">Par</option>
-                                    <option value="odd">Ímpar</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label class="block text-slate-600 font-medium">Data Bits</label>
-                                <select id="data-bits" class="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                    <option value="7">7</option>
-                                    <option value="8" selected>8</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label class="block text-slate-600 font-medium">Stop Bits</label>
-                                <select id="stop-bits" class="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                    <option value="1" selected>1</option>
-                                    <option value="2">2</option>
-                                </select>
-                            </div>
                         </div>
 
                         <div class="mt-4 flex gap-3">
@@ -131,15 +115,15 @@
                                 <i data-lucide="file-down" class="w-[18px] h-[18px]"></i>
                                 Baixar .tspl
                             </button>
-                            <button id="serial-connect-btn" onclick="toggleSerial()" class="flex-1 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white py-3 px-4 rounded-xl font-medium transition-colors cursor-pointer">
+                            <button id="connect-btn" onclick="toggleConnection()" class="flex-1 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white py-3 px-4 rounded-xl font-medium transition-colors cursor-pointer">
                                 <i data-lucide="usb" class="w-[18px] h-[18px]"></i>
-                                Conectar Serial
+                                Conectar
                             </button>
                         </div>
-                        <div id="serial-status" class="text-xs text-slate-500 text-center mt-2"></div>
+                        <div id="connection-status" class="text-xs text-slate-500 text-center mt-2"></div>
 
                         <!-- Botão de impressão (aparece só quando conectado) -->
-                        <button id="print-btn" onclick="printViaSerial()" class="hidden mt-2 flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-700 text-white py-3 px-4 rounded-xl font-medium transition-colors cursor-pointer w-full">
+                        <button id="print-btn" onclick="sendPrint()" class="hidden mt-2 flex items-center justify-center gap-2 bg-rose-600 hover:bg-rose-700 text-white py-3 px-4 rounded-xl font-medium transition-colors cursor-pointer w-full">
                             <i data-lucide="printer" class="w-[18px] h-[18px]"></i>
                             Imprimir Etiqueta
                         </button>
@@ -152,20 +136,41 @@
     <script>
         lucide.createIcons();
 
+        // ===== Variáveis globais =====
         let currentTsplContent = '';
+        let connectionType = null; // 'serial' ou 'usb'
         let serialPort = null;
-        let reader = null;
         let writer = null;
+        let reader = null;
+        let usbDevice = null;
+        let usbEndpoint = null;
+        let usbInterfaceNumber = 0;
 
-        // Elementos DOM
+        // ===== DOM references =====
         const errorContainer = document.getElementById('error-container');
         const errorText = document.getElementById('error-text');
         const infoContainer = document.getElementById('info-container');
         const infoText = document.getElementById('info-text');
-        const statusEl = document.getElementById('serial-status');
-        const connectBtn = document.getElementById('serial-connect-btn');
+        const statusEl = document.getElementById('connection-status');
+        const connectBtn = document.getElementById('connect-btn');
         const printBtn = document.getElementById('print-btn');
+        const methodSelect = document.getElementById('connection-method');
+        const serialSettings = document.getElementById('serial-settings');
 
+        // Mostrar/esconder configurações de serial conforme método
+        methodSelect.addEventListener('change', () => {
+            if (methodSelect.value === 'serial') {
+                serialSettings.style.display = 'block';
+            } else {
+                serialSettings.style.display = 'none';
+            }
+            // Se já estiver conectado, desconecta ao mudar método
+            if (serialPort || usbDevice) {
+                disconnect();
+            }
+        });
+
+        // ===== Alertas =====
         function showError(msg) {
             errorContainer.classList.remove('hidden');
             errorText.innerText = msg;
@@ -190,6 +195,7 @@
             statusEl.innerText = msg;
         }
 
+        // ===== Upload e conversão =====
         function handleFileUpload(event) {
             const file = event.target.files[0];
             if (file) {
@@ -203,6 +209,7 @@
                     hideInfo();
                     setStatus('');
                     printBtn.classList.add('hidden');
+                    if (serialPort || usbDevice) disconnect();
                 };
                 reader.readAsText(file);
             }
@@ -282,8 +289,8 @@
                 document.getElementById('empty-tspl').classList.add('hidden');
                 document.getElementById('content-tspl').classList.remove('hidden');
 
-                // Se já estiver conectado, mostra o botão de imprimir
-                if (serialPort) {
+                // Se já estiver conectado, mostra botão de imprimir
+                if (serialPort || usbDevice) {
                     printBtn.classList.remove('hidden');
                 }
 
@@ -303,118 +310,168 @@
             URL.revokeObjectURL(url);
         }
 
-        // ===================== Web Serial API =====================
-
-        async function toggleSerial() {
-            if (serialPort) {
-                // Desconectar
-                await closeSerial();
+        // ===== Gerenciamento de conexão =====
+        async function toggleConnection() {
+            if (serialPort || usbDevice) {
+                await disconnect();
                 return;
             }
 
-            // Conectar
-            await connectSerial();
+            const method = methodSelect.value;
+            if (method === 'serial') {
+                await connectSerial();
+            } else {
+                await connectUSB();
+            }
         }
 
+        // ----- Serial (COM) -----
         async function connectSerial() {
             if (!('serial' in navigator)) {
-                showError("Seu navegador não suporta Web Serial API. Use Chrome/Edge/Chromium.");
+                showError("Web Serial API não suportada neste navegador.");
                 return;
             }
 
             try {
-                // Solicita a porta
                 const port = await navigator.serial.requestPort();
-                if (!port) {
-                    // Usuário cancelou
-                    return;
-                }
+                if (!port) return; // usuário cancelou
 
-                // Configurações
                 const baudRate = parseInt(document.getElementById('baud-rate').value);
-                const parity = document.getElementById('parity').value;
-                const dataBits = parseInt(document.getElementById('data-bits').value);
-                const stopBits = parseInt(document.getElementById('stop-bits').value);
-
-                await port.open({
-                    baudRate,
-                    parity,
-                    dataBits,
-                    stopBits
-                });
+                await port.open({ baudRate });
 
                 serialPort = port;
-                setStatus(`✅ Conectado a ${port.getInfo().usbProductId || '?'} - ${baudRate} bps`);
+                connectionType = 'serial';
+                setStatus(`✅ Conectado (Serial) - ${baudRate} bps`);
                 connectBtn.innerHTML = `<i data-lucide="usb" class="w-[18px] h-[18px]"></i> Desconectar`;
                 connectBtn.className = "flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white py-3 px-4 rounded-xl font-medium transition-colors cursor-pointer";
                 lucide.createIcons();
 
-                // Cria writer e reader
+                // Cria writer
                 const textEncoder = new TextEncoderStream();
-                const writableStreamClosed = textEncoder.readable.pipeTo(port.writable);
+                textEncoder.readable.pipeTo(port.writable);
                 writer = textEncoder.writable.getWriter();
 
-                // Inicia leitura (opcional para receber feedback)
+                // Leitura opcional
                 const textDecoder = new TextDecoderStream();
-                const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+                port.readable.pipeTo(textDecoder.writable);
                 reader = textDecoder.readable.getReader();
 
-                // Mostra botão de impressão se houver conteúdo
-                if (currentTsplContent) {
-                    printBtn.classList.remove('hidden');
-                }
-
-                // Configura listener para quando a porta for fechada (ex: desconexão física)
+                // Listener de desconexão
                 port.addEventListener('disconnect', () => {
-                    if (serialPort === port) {
-                        closeSerial(true);
-                    }
+                    if (serialPort === port) disconnect(true);
                 });
 
+                if (currentTsplContent) printBtn.classList.remove('hidden');
                 showInfo('Porta serial conectada. Pronto para imprimir.');
 
             } catch (err) {
-                console.error(err);
-                showError('Erro ao conectar: ' + (err.message || err));
+                showError('Erro na conexão serial: ' + (err.message || err));
                 setStatus('❌ Falha na conexão');
             }
         }
 
-        async function closeSerial(disconnected = false) {
-            if (!serialPort) return;
-
-            try {
-                // Libera writer e reader
-                if (writer) {
-                    await writer.close();
-                    writer = null;
-                }
-                if (reader) {
-                    await reader.cancel();
-                    reader = null;
-                }
-                await serialPort.close();
-            } catch (err) {
-                console.warn('Erro ao fechar porta:', err);
+        // ----- USB Direto (WebUSB) -----
+        async function connectUSB() {
+            if (!('usb' in navigator)) {
+                showError("WebUSB API não suportada neste navegador.");
+                return;
             }
 
-            serialPort = null;
-            setStatus(disconnected ? '❌ Desconectado (dispositivo removido)' : '🔌 Desconectado');
-            connectBtn.innerHTML = `<i data-lucide="usb" class="w-[18px] h-[18px]"></i> Conectar Serial`;
+            try {
+                const device = await navigator.usb.requestDevice({ filters: [] });
+                if (!device) return;
+
+                await device.open();
+                usbDevice = device;
+                connectionType = 'usb';
+
+                // Encontra o endpoint de bulk out
+                let foundEndpoint = null;
+                let ifaceNum = 0;
+                for (const config of device.configurations) {
+                    for (const iface of config.interfaces) {
+                        for (const alt of iface.alternates) {
+                            const outEp = alt.endpoints.find(ep => ep.direction === 'out' && ep.type === 'bulk');
+                            if (outEp) {
+                                ifaceNum = iface.interfaceNumber;
+                                foundEndpoint = outEp;
+                                break;
+                            }
+                        }
+                        if (foundEndpoint) break;
+                    }
+                    if (foundEndpoint) break;
+                }
+
+                if (!foundEndpoint) {
+                    await device.close();
+                    throw new Error("Nenhum endpoint de saída (bulk out) encontrado.");
+                }
+
+                usbInterfaceNumber = ifaceNum;
+                usbEndpoint = foundEndpoint;
+
+                await device.claimInterface(ifaceNum);
+                setStatus(`✅ Conectado (USB) - ${device.productName || 'dispositivo'}`);
+                connectBtn.innerHTML = `<i data-lucide="usb" class="w-[18px] h-[18px]"></i> Desconectar`;
+                connectBtn.className = "flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white py-3 px-4 rounded-xl font-medium transition-colors cursor-pointer";
+                lucide.createIcons();
+
+                // Listener de desconexão
+                device.addEventListener('disconnect', () => {
+                    if (usbDevice === device) disconnect(true);
+                });
+
+                if (currentTsplContent) printBtn.classList.remove('hidden');
+                showInfo('Dispositivo USB conectado. Pronto para imprimir.');
+
+            } catch (err) {
+                showError('Erro na conexão USB: ' + (err.message || err));
+                setStatus('❌ Falha na conexão USB');
+            }
+        }
+
+        // ----- Desconectar (ambos) -----
+        async function disconnect(disconnected = false) {
+            if (connectionType === 'serial' && serialPort) {
+                try {
+                    if (writer) { await writer.close(); writer = null; }
+                    if (reader) { await reader.cancel(); reader = null; }
+                    await serialPort.close();
+                } catch (e) { console.warn('Erro ao fechar serial:', e); }
+                serialPort = null;
+                setStatus(disconnected ? '❌ Desconectado (dispositivo removido)' : '🔌 Desconectado');
+            } else if (connectionType === 'usb' && usbDevice) {
+                try {
+                    if (usbDevice.opened) {
+                        await usbDevice.releaseInterface(usbInterfaceNumber);
+                        await usbDevice.close();
+                    }
+                } catch (e) { console.warn('Erro ao fechar USB:', e); }
+                usbDevice = null;
+                usbEndpoint = null;
+                setStatus(disconnected ? '❌ Desconectado (dispositivo removido)' : '🔌 Desconectado');
+            } else {
+                return;
+            }
+
+            connectionType = null;
+            connectBtn.innerHTML = `<i data-lucide="usb" class="w-[18px] h-[18px]"></i> Conectar`;
             connectBtn.className = "flex-1 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white py-3 px-4 rounded-xl font-medium transition-colors cursor-pointer";
             lucide.createIcons();
             printBtn.classList.add('hidden');
             hideInfo();
         }
 
-        async function printViaSerial() {
-            if (!serialPort) {
-                showError("Conecte-se à porta serial primeiro.");
+        // ===== Envio de impressão =====
+        async function sendPrint() {
+            if (!currentTsplContent) {
+                showError("Nenhum código TSPL disponível. Converta um ZPL primeiro.");
                 return;
             }
 
-            if (!currentTsplContent) {
-                showError("Nenhum código TSPL disponível. Converta um ZPL primeiro.");
+            if (!serialPort && !usbDevice) {
+                showError("Conecte-se ao dispositivo primeiro.");
                 return;
             }
 
@@ -424,17 +481,25 @@
             try {
                 setStatus('📤 Enviando dados...');
 
-                // Envia o conteúdo TSPL
-                await writer.write(currentTsplContent);
+                if (connectionType === 'serial') {
+                    // Serial
+                    await writer.write(currentTsplContent);
+                } else if (connectionType === 'usb') {
+                    // USB
+                    const encoder = new TextEncoder();
+                    const data = encoder.encode(currentTsplContent);
+                    const chunkSize = 512;
+                    for (let i = 0; i < data.length; i += chunkSize) {
+                        const chunk = data.slice(i, i + chunkSize);
+                        await usbDevice.transferOut(usbEndpoint.endpointNumber, chunk);
+                    }
+                }
 
-                // Pequena pausa para processamento
+                // Pequena pausa
                 await new Promise(resolve => setTimeout(resolve, 300));
 
                 setStatus('✅ Dados enviados com sucesso!');
                 showInfo('Comando TSPL enviado para a impressora.');
-
-                // Opcional: ler resposta (se houver)
-                // Nota: muitas impressoras não enviam resposta, então ignoramos.
 
             } catch (err) {
                 console.error(err);
@@ -443,19 +508,17 @@
             }
         }
 
-        // Limpeza automática ao recarregar a página
+        // Limpeza ao recarregar
         window.addEventListener('beforeunload', async () => {
-            if (serialPort) {
-                await closeSerial();
-            }
+            if (serialPort || usbDevice) await disconnect();
         });
+
+        // Registro do Service Worker (PWA)
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js')
+                .then(() => console.log('SW registrado'))
+                .catch(err => console.error('Erro no SW:', err));
+        }
     </script>
-    <script>
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js')
-      .then(reg => console.log('Service Worker registrado com sucesso!'))
-      .catch(err => console.error('Falha ao registrar Service Worker:', err));
-  }
-</script>
 </body>
 </html>
