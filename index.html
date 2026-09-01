@@ -94,9 +94,13 @@
                             <div>
                                 <label class="block text-slate-600 font-medium">Método</label>
                                 <select id="connection-method" class="w-full border border-slate-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                    <option value="serial">Porta Serial (COM)</option>
+                                    <option value="serial">Porta Serial (COM) ★ recomendado</option>
                                     <option value="usb">USB Direto (WebUSB)</option>
                                 </select>
+                                <div id="usb-warning" class="hidden text-xs text-amber-600 mt-1 flex items-center gap-1">
+                                    <i data-lucide="alert-triangle" class="w-3 h-3"></i>
+                                    <span>Pode não funcionar com drivers de porta COM instalados. Prefira a Serial.</span>
+                                </div>
                             </div>
                             <div id="serial-settings">
                                 <label class="block text-slate-600 font-medium">Baud Rate</label>
@@ -107,6 +111,18 @@
                                     <option value="57600">57600</option>
                                     <option value="115200" selected>115200</option>
                                 </select>
+                            </div>
+                        </div>
+
+                        <!-- Campos avançados para USB (opcionais) -->
+                        <div id="usb-advanced" class="hidden mt-2 grid grid-cols-2 gap-2 text-xs">
+                            <div>
+                                <label class="block text-slate-600">Vendor ID (hex)</label>
+                                <input id="vendor-id" placeholder="Ex: 04b8" class="w-full border border-slate-300 rounded px-2 py-1">
+                            </div>
+                            <div>
+                                <label class="block text-slate-600">Product ID (hex)</label>
+                                <input id="product-id" placeholder="Ex: 0202" class="w-full border border-slate-300 rounded px-2 py-1">
                             </div>
                         </div>
 
@@ -146,7 +162,7 @@
         let usbEndpoint = null;
         let usbInterfaceNumber = 0;
 
-        // ===== DOM references =====
+        // ===== DOM =====
         const errorContainer = document.getElementById('error-container');
         const errorText = document.getElementById('error-text');
         const infoContainer = document.getElementById('info-container');
@@ -156,19 +172,31 @@
         const printBtn = document.getElementById('print-btn');
         const methodSelect = document.getElementById('connection-method');
         const serialSettings = document.getElementById('serial-settings');
+        const usbWarning = document.getElementById('usb-warning');
+        const usbAdvanced = document.getElementById('usb-advanced');
 
-        // Mostrar/esconder configurações de serial conforme método
+        // ===== Mostrar/esconder configurações e avisos =====
         methodSelect.addEventListener('change', () => {
             if (methodSelect.value === 'serial') {
                 serialSettings.style.display = 'block';
+                usbWarning.classList.add('hidden');
+                usbAdvanced.classList.add('hidden');
             } else {
                 serialSettings.style.display = 'none';
+                usbWarning.classList.remove('hidden');
+                usbAdvanced.classList.remove('hidden');
+                // Mensagem adicional
+                document.querySelector('#usb-warning span').textContent = 
+                    '⚠️ Se sua impressora aparece como porta COM (ex: USB006), o WebUSB não a verá. Use a opção Serial.';
             }
             // Se já estiver conectado, desconecta ao mudar método
             if (serialPort || usbDevice) {
                 disconnect();
             }
         });
+
+        // Inicializa com o aviso correto
+        methodSelect.dispatchEvent(new Event('change'));
 
         // ===== Alertas =====
         function showError(msg) {
@@ -289,7 +317,6 @@
                 document.getElementById('empty-tspl').classList.add('hidden');
                 document.getElementById('content-tspl').classList.remove('hidden');
 
-                // Se já estiver conectado, mostra botão de imprimir
                 if (serialPort || usbDevice) {
                     printBtn.classList.remove('hidden');
                 }
@@ -378,7 +405,20 @@
             }
 
             try {
-                const device = await navigator.usb.requestDevice({ filters: [] });
+                // Tenta usar vendorId/productId se fornecidos
+                const vendorId = document.getElementById('vendor-id').value.trim();
+                const productId = document.getElementById('product-id').value.trim();
+                let filters = [];
+                if (vendorId && productId) {
+                    filters.push({
+                        vendorId: parseInt(vendorId, 16),
+                        productId: parseInt(productId, 16)
+                    });
+                }
+                // Se não houver filtros, pede qualquer dispositivo
+                const device = await navigator.usb.requestDevice({ 
+                    filters: filters.length ? filters : [] 
+                });
                 if (!device) return;
 
                 await device.open();
@@ -405,7 +445,7 @@
 
                 if (!foundEndpoint) {
                     await device.close();
-                    throw new Error("Nenhum endpoint de saída (bulk out) encontrado.");
+                    throw new Error("Nenhum endpoint de saída (bulk out) encontrado. Tente usar a porta Serial.");
                 }
 
                 usbInterfaceNumber = ifaceNum;
@@ -428,6 +468,8 @@
             } catch (err) {
                 showError('Erro na conexão USB: ' + (err.message || err));
                 setStatus('❌ Falha na conexão USB');
+                // Sugere usar Serial
+                showInfo('Dica: Se sua impressora aparece como porta COM, use a opção "Porta Serial (COM)".');
             }
         }
 
@@ -482,10 +524,8 @@
                 setStatus('📤 Enviando dados...');
 
                 if (connectionType === 'serial') {
-                    // Serial
                     await writer.write(currentTsplContent);
                 } else if (connectionType === 'usb') {
-                    // USB
                     const encoder = new TextEncoder();
                     const data = encoder.encode(currentTsplContent);
                     const chunkSize = 512;
@@ -495,7 +535,6 @@
                     }
                 }
 
-                // Pequena pausa
                 await new Promise(resolve => setTimeout(resolve, 300));
 
                 setStatus('✅ Dados enviados com sucesso!');
